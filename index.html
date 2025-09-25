@@ -1,0 +1,507 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Beginners Guide to Skincare</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Google Fonts - Inter and Playfair Display -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Playfair+Display:wght@700;800&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+        .animated-gradient {
+            background-size: 400% 400%;
+            animation: gradient-animation 15s ease infinite;
+        }
+        @keyframes gradient-animation {
+            0% {
+                background-position: 0% 50%;
+            }
+            50% {
+                background-position: 100% 50%;
+            }
+            100% {
+                background-position: 0% 50%;
+            }
+        }
+        .fade-in {
+            animation: fadeIn 0.5s ease-in-out;
+        }
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+    </style>
+</head>
+<body class="min-h-screen bg-gradient-to-br from-purple-50 to-indigo-50 flex flex-col md:flex-row p-4 sm:p-8">
+
+    <!-- Firebase SDKs -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, setDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        
+        // Use provided global variables
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
+        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+
+        // Initialize Firebase
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const db = getFirestore(app);
+        setLogLevel('debug'); // Enable debug logging for Firestore
+
+        // Expose Firebase utilities to the main script
+        window.firebaseUtils = {
+            auth,
+            db,
+            appId,
+            signIn: async () => {
+                if (auth.currentUser) return;
+                try {
+                    if (initialAuthToken) {
+                        await signInWithCustomToken(auth, initialAuthToken);
+                    } else {
+                        await signInAnonymously(auth);
+                    }
+                } catch (error) {
+                    console.error("Firebase Auth Error:", error);
+                }
+            }
+        };
+    </script>
+
+    <!-- Sidebar -->
+    <nav class="bg-white rounded-3xl shadow-2xl p-6 w-full md:w-64 md:min-h-screen md:sticky md:top-8 mb-6 md:mb-0 md:mr-6 flex flex-col items-center">
+        <h2 class="text-xl font-bold text-gray-800 mb-6">Navigation</h2>
+        <ul class="w-full space-y-4">
+            <li><a href="#" class="nav-link text-center block px-4 py-2 rounded-full font-semibold bg-indigo-50 hover:bg-indigo-200 transition-colors" data-page="home">Home</a></li>
+            <li><a href="#" class="nav-link text-center block px-4 py-2 rounded-full font-semibold bg-indigo-50 hover:bg-indigo-200 transition-colors" data-page="about">About Us</a></li>
+            <li><a href="#" class="nav-link text-center block px-4 py-2 rounded-full font-semibold bg-indigo-50 hover:bg-indigo-200 transition-colors" data-page="products">Products</a></li>
+            <li><a href="#" class="nav-link text-center block px-4 py-2 rounded-full font-semibold bg-indigo-50 hover:bg-indigo-200 transition-colors" data-page="tips">Tips</a></li>
+            <li><a href="#" class="nav-link text-center block px-4 py-2 rounded-full font-semibold bg-indigo-50 hover:bg-indigo-200 transition-colors" data-page="contact">Contact Us</a></li>
+        </ul>
+        <p id="user-info" class="text-xs text-gray-500 mt-auto text-center w-full break-words"></p>
+    </nav>
+
+    <!-- Main Content Area -->
+    <main id="main-content" class="bg-white rounded-3xl shadow-2xl p-6 sm:p-10 w-full transition-all duration-300">
+        <!-- Dynamic content for each page will be loaded here -->
+    </main>
+
+    <!-- Main JavaScript Logic -->
+    <script type="module">
+        // Import Firebase functions from the global scope set by the module script
+        const { auth, db, appId, signIn } = window.firebaseUtils;
+        import { doc, setDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+
+        // Data and State
+        let currentQuestionIndex = 0;
+        let userAnswers = {};
+        let userDataSubscription = null;
+        let userId = null;
+        let userDataRef = null;
+
+        const mainContent = document.getElementById('main-content');
+        const userInfoSpan = document.getElementById('user-info');
+
+        // Questions data
+        const questions = [
+            {
+                id: 'skinType',
+                question: 'What is your primary skin type?',
+                options: [
+                    { text: 'Oily', value: 'oily' },
+                    { text: 'Dry', value: 'dry' },
+                    { text: 'Combination', value: 'combination' },
+                    { text: 'Normal', value: 'normal' },
+                    { text: 'Sensitive', value: 'sensitive' }
+                ]
+            },
+            {
+                id: 'concerns',
+                question: 'Select your top skin concerns (you can choose multiple):',
+                options: [
+                    { text: 'Acne & Blemishes', value: 'acne' },
+                    { text: 'Fine Lines & Wrinkles', value: 'anti-aging' },
+                    { text: 'Dullness & Uneven Tone', value: 'dullness' },
+                    { text: 'Redness & Irritation', value: 'redness' },
+                    { text: 'Hyperpigmentation', value: 'pigmentation' },
+                    { text: 'Large Pores', value: 'pores' }
+                ]
+            },
+            {
+                id: 'lifestyle',
+                question: 'Which of these best describes your lifestyle?',
+                options: [
+                    { text: 'Active & Outdoorsy', value: 'active' },
+                    { text: 'Mostly Indoors', value: 'indoors' },
+                    { text: 'High-stress Environment', value: 'stress' },
+                    { text: 'Frequent Travel', value: 'travel' }
+                ]
+            },
+            {
+                id: 'age',
+                question: 'Which age group are you in?',
+                options: [
+                    { text: 'Teens (13-19)', value: 'teens' },
+                    { text: '20s', value: 'twenties' },
+                    { text: '30s', value: 'thirties' },
+                    { text: '40s+', value: 'forties' }
+                ]
+            },
+            {
+                id: 'texture',
+                question: 'What product texture do you prefer?',
+                options: [
+                    { text: 'Light & Gel-like', value: 'gel' },
+                    { text: 'Rich & Creamy', value: 'cream' },
+                    { text: 'Oil-based', value: 'oil' },
+                    { text: 'Watery & Essence-like', value: 'watery' }
+                ]
+            },
+            {
+                id: 'frequency',
+                question: 'How many steps are you comfortable with in your routine?',
+                options: [
+                    { text: 'Minimal (1-3 steps)', value: 'minimal' },
+                    { text: 'Standard (3-5 steps)', value: 'standard' },
+                    { text: 'Extensive (5+ steps)', value: 'extensive' }
+                ]
+            }
+        ];
+
+        // Product recommendations data
+        const recommendations = {
+            'oily': {
+                cleanser: { name: 'CeraVe Foaming Cleanser', brand: 'CeraVe', description: 'Gently cleanses and removes excess oil without disrupting the skin barrier.', image: 'https://placehold.co/150x150/e0f2fe/0c4a6e?text=CeraVe' },
+                moisturizer: { name: 'Neutrogena Hydro Boost Water Gel', brand: 'Neutrogena', description: 'A lightweight, oil-free moisturizer that provides instant hydration.', image: 'https://placehold.co/150x150/dbeafe/1e3a8a?text=Neutrogena' },
+                serum: { name: 'The Ordinary Niacinamide 10% + Zinc 1%', brand: 'The Ordinary', description: 'Reduces the look of blemishes and visible pores, while balancing oil.', image: 'https://placehold.co/150x150/f0f9ff/172554?text=The+Ordinary' }
+            },
+            'dry': {
+                cleanser: { name: 'La Roche-Posay Hydrating Cleanser', brand: 'La Roche-Posay', description: 'A creamy formula that removes impurities while providing essential moisture.', image: 'https://placehold.co/150x150/fef2f2/991b1b?text=La+Roche' },
+                moisturizer: { name: 'Weleda Skin Food Original Ultra-Rich Cream', brand: 'Weleda', description: 'A cult-favorite, intensely hydrating cream for very dry skin.', image: 'https://placehold.co/150x150/fdf2f8/831843?text=Weleda' },
+                serum: { name: 'Vichy Mineral 89 Serum', brand: 'Vichy', description: 'Fortifies and hydrates with hyaluronic acid and 89% mineral-rich water.', image: 'https://placehold.co/150x150/fff7ed/9a3412?text=Vichy' }
+            },
+            'combination': {
+                cleanser: { name: 'Paula\'s Choice Resist Perfectly Balanced Cleanser', brand: 'Paula\'s Choice', description: 'Effectively removes makeup and oil while leaving skin soft and hydrated.', image: 'https://placehold.co/150x150/f0fdf4/14532d?text=Paulas+Choice' },
+                moisturizer: { name: 'Kiehl\'s Ultra Facial Cream', brand: 'Kiehl\'s', description: 'A lightweight moisturizer that hydrates for 24 hours without feeling greasy.', image: 'https://placehold.co/150x150/f5f5f4/525252?text=Kiehls' },
+                serum: { name: 'Glow Recipe Watermelon Niacinamide Dew Drops', brand: 'Glow Recipe', description: 'Hydrates, visibly brightens, and reduces the look of hyperpigmentation.', image: 'https://placehold.co/150x150/fefce8/713f12?text=Glow+Recipe' }
+            },
+            'sensitive': {
+                cleanser: { name: 'Avene Tolerance Extremely Gentle Cleanser', brand: 'Avene', description: 'A no-rinse formula that cleanses and soothes reactive skin.', image: 'https://placehold.co/150x150/f0fdfa/0f766e?text=Avene' },
+                moisturizer: { name: 'First Aid Beauty Ultra Repair Cream', brand: 'First Aid Beauty', description: 'A thick, rich cream that provides instant relief and long-term hydration.', image: 'https://placehold.co/150x150/f0f9ff/0c4a6e?text=First+Aid' },
+                serum: { name: 'Cocokind Ceramide Barrier Serum', brand: 'Cocokind', description: 'Helps to support the skin\'s moisture barrier and protect against environmental stressors.', image: 'https://placehold.co/150x150/f8fafc/0f172a?text=Cocokind' }
+            },
+            'normal': {
+                cleanser: { name: 'Tatcha The Rice Wash Skin-Softening Cleanser', brand: 'Tatcha', description: 'A gentle, pH-neutral cleanser that removes impurities without stripping moisture.', image: 'https://placehold.co/150x150/fef2f2/b91c1c?text=Tatcha' },
+                moisturizer: { name: 'Embryolisse Lait-Crème Concentré', brand: 'Embryolisse', description: 'A multi-purpose moisturizer that hydrates and primes the skin.', image: 'https://placehold.co/150x150/fff7ed/9a3412?text=Embryolisse' },
+                serum: { name: 'Paulas Choice 10% Niacinamide Booster', brand: 'Paula\'s Choice', description: 'Visibly minimizes pores, improves skin tone, and reduces fine lines.', image: 'https://placehold.co/150x150/f0f9ff/172554?text=Paulas+Choice' }
+            }
+        };
+
+        // Utility functions
+        function showLoading() {
+            mainContent.innerHTML = `<div class="min-h-[400px] flex items-center justify-center"><div id="loading-spinner" class="animate-spin rounded-full h-16 w-16 border-t-2 border-b-2 border-indigo-500"></div></div>`;
+        }
+        
+        function hideLoading() {
+            const spinner = document.getElementById('loading-spinner');
+            if (spinner) spinner.remove();
+        }
+
+        // UI Rendering Logic
+        function renderPage(page) {
+            let html = '';
+            switch(page) {
+                case 'home':
+                    html = `
+                        <div class="text-center fade-in">
+                            <h1 class="text-4xl sm:text-6xl font-extrabold text-gray-800 mb-6" style="font-family: 'Playfair Display', serif;">Beginners guide to skin care</h1>
+                            <p class="text-lg text-gray-700 mb-8 max-w-xl mx-auto">Discover your perfect routine with our personalized guide and expert tips. Your journey to healthy, glowing skin starts here.</p>
+                            <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+                                <img class="rounded-2xl shadow-lg w-full h-auto object-cover" src="https://placehold.co/600x400/fff7ed/9a3412?text=Healthy+Skin" alt="Image of a person with healthy, glowing skin">
+                                <img class="rounded-2xl shadow-lg w-full h-auto object-cover" src="https://placehold.co/600x400/f0f9ff/172554?text=Skin+Cells" alt="Image showing microscopic skin cells">
+                                <img class="rounded-2xl shadow-lg w-full h-auto object-cover" src="https://placehold.co/600x400/eef2ff/4338ca?text=Clean+Face" alt="Image of a person cleaning their face">
+                            </div>
+                            <div class="text-center pt-8">
+                                <button id="start-btn" class="px-8 py-4 bg-indigo-600 text-white rounded-full font-bold text-lg shadow-md hover:bg-indigo-700 transition-colors duration-200">
+                                    Start the Quiz
+                                </button>
+                            </div>
+                        </div>
+                    `;
+                    break;
+                case 'about':
+                    html = `
+                        <div class="space-y-6 fade-in">
+                            <h2 class="text-3xl font-bold text-gray-800">About Us</h2>
+                            <p class="text-gray-700">We believe that everyone deserves to feel confident in their own skin. Our mission is to demystify the world of skincare, providing clear, personalized, and effective routines for all skin types and concerns. We cut through the noise to help you find what truly works.</p>
+                            <p class="text-gray-700">Our recommendations are based on expert knowledge and a deep understanding of skincare science. We're here to guide you, step by step, towards a healthier, more radiant complexion.</p>
+                        </div>
+                    `;
+                    break;
+                case 'products':
+                    html = `<div id="products-content"></div>`;
+                    break;
+                case 'tips':
+                    html = `
+                        <div class="space-y-6 fade-in">
+                            <h2 class="text-3xl font-bold text-gray-800">Skincare Tips</h2>
+                            <div class="space-y-4">
+                                <div class="bg-gray-50 p-6 rounded-xl border border-gray-200">
+                                    <h3 class="font-bold text-xl text-indigo-600 mb-2">1. Always Wear SPF</h3>
+                                    <p class="text-gray-700">Daily sunscreen application is the most crucial step in any skincare routine. It prevents premature aging, sun damage, and reduces the risk of skin cancer. Use at least SPF 30, even on cloudy days.</p>
+                                </div>
+                                <div class="bg-gray-50 p-6 rounded-xl border border-gray-200">
+                                    <h3 class="font-bold text-xl text-indigo-600 mb-2">2. Cleanse Gently</h3>
+                                    <p class="text-gray-700">Over-cleansing or using harsh cleansers can strip your skin of its natural oils, leading to irritation. Opt for a gentle, hydrating cleanser and wash your face no more than twice a day.</p>
+                                </div>
+                                <div class="bg-gray-50 p-6 rounded-xl border border-gray-200">
+                                    <h3 class="font-bold text-xl text-indigo-600 mb-2">3. Hydrate, Hydrate, Hydrate!</h3>
+                                    <p class="text-gray-700">Proper hydration is key to healthy skin. Use a moisturizer that suits your skin type to keep your skin barrier intact and functioning optimally. Look for ingredients like hyaluronic acid and ceramides.</p>
+                                </div>
+                                <div class="bg-gray-50 p-6 rounded-xl border border-gray-200">
+                                    <h3 class="font-bold text-xl text-indigo-600 mb-2">4. Don't Pick Your Skin</h3>
+                                    <p class="text-gray-700">Picking at blemishes or scabs can lead to scarring and spread bacteria, causing more breakouts. Instead, use a targeted spot treatment and let your skin heal naturally.</p>
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                    break;
+                case 'contact':
+                    html = `
+                        <div class="text-center fade-in">
+                            <h2 class="text-3xl font-bold text-gray-800 mb-4">Contact Us</h2>
+                            <p class="text-lg text-gray-700 mb-2">Have a question or feedback? We'd love to hear from you!</p>
+                            <a href="mailto:beginnersguidetoskincare@gmail.com" class="text-indigo-600 hover:text-indigo-800 font-semibold transition-colors">
+                                beginnersguidetoskincare@gmail.com
+                            </a>
+                        </div>
+                    `;
+                    break;
+            }
+            mainContent.innerHTML = html;
+
+            if (page === 'home') {
+                 document.getElementById('start-btn').addEventListener('click', () => {
+                    renderPage('products');
+                });
+            } else if (page === 'products') {
+                renderQuestion();
+            }
+        }
+
+        function renderQuestion() {
+            const productsContent = document.getElementById('products-content');
+            if (!productsContent) {
+                console.error("products-content element not found. Aborting renderQuestion.");
+                return;
+            }
+            
+            if (currentQuestionIndex >= questions.length) {
+                saveAnswersAndDisplayResults();
+                return;
+            }
+
+            const questionData = questions[currentQuestionIndex];
+            let optionsHtml = '';
+            const inputType = questionData.id === 'skinType' || questionData.id === 'age' || questionData.id === 'lifestyle' || questionData.id === 'texture' || questionData.id === 'frequency' ? 'radio' : 'checkbox';
+
+            questionData.options.forEach(option => {
+                const isChecked = userAnswers[questionData.id]?.includes(option.value);
+                optionsHtml += `
+                    <label class="flex items-center space-x-3 p-4 bg-gray-50 rounded-lg cursor-pointer hover:bg-indigo-100 transition-colors duration-200">
+                        <input type="${inputType}" name="${questionData.id}" value="${option.value}" ${isChecked ? 'checked' : ''} class="h-5 w-5 text-indigo-600 rounded-md border-gray-300 focus:ring-indigo-500">
+                        <span class="text-gray-800 text-base sm:text-lg font-medium">${option.text}</span>
+                    </label>
+                `;
+            });
+
+            productsContent.innerHTML = `
+                <div class="space-y-6 w-full fade-in">
+                    <div class="text-center">
+                        <p class="text-xl sm:text-2xl font-semibold text-gray-800 mb-2">${questionData.question}</p>
+                        <p class="text-sm text-gray-500">${currentQuestionIndex + 1} of ${questions.length}</p>
+                    </div>
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        ${optionsHtml}
+                    </div>
+                    <div class="flex justify-between items-center pt-4">
+                        ${currentQuestionIndex > 0 ? `<button id="back-btn" class="px-6 py-3 bg-gray-200 text-gray-800 rounded-full font-bold shadow-sm hover:bg-gray-300 transition-colors duration-200">Back</button>` : '<div></div>'}
+                        <button id="next-btn" class="px-6 py-3 bg-indigo-600 text-white rounded-full font-bold shadow-md hover:bg-indigo-700 transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500">
+                            ${currentQuestionIndex === questions.length - 1 ? 'Get Results' : 'Next'}
+                        </button>
+                    </div>
+                </div>
+            `;
+
+            document.getElementById('next-btn').addEventListener('click', () => {
+                const selectedOptions = Array.from(document.querySelectorAll(`input[name="${questionData.id}"]:checked`)).map(el => el.value);
+                userAnswers[questionData.id] = selectedOptions;
+                currentQuestionIndex++;
+                renderQuestion();
+            });
+
+            if (currentQuestionIndex > 0) {
+                document.getElementById('back-btn').addEventListener('click', () => {
+                    currentQuestionIndex--;
+                    renderQuestion();
+                });
+            }
+        }
+
+        async function saveAnswersAndDisplayResults() {
+            showLoading();
+            try {
+                if (userDataRef) {
+                    await setDoc(userDataRef, userAnswers);
+                    console.log("Answers successfully saved to Firestore.");
+                }
+                hideLoading();
+                displayResults();
+            } catch (e) {
+                console.error("Error writing document: ", e);
+                hideLoading();
+                displayResults();
+            }
+        }
+
+        function displayResults() {
+            // Get the main content element directly since the sub-container
+            // might have been removed by the loading spinner.
+            const mainContent = document.getElementById('main-content');
+            
+            const primarySkinType = userAnswers.skinType ? userAnswers.skinType[0] : null;
+            const concerns = userAnswers.concerns || [];
+            
+            let recommendedProducts = [];
+            if (primarySkinType && recommendations[primarySkinType]) {
+                recommendedProducts.push(recommendations[primarySkinType].cleanser);
+                recommendedProducts.push(recommendations[primarySkinType].moisturizer);
+                recommendedProducts.push(recommendations[primarySkinType].serum);
+            }
+            
+            if (concerns.includes('acne')) {
+                recommendedProducts.push({ name: 'Benzoyl Peroxide Spot Treatment', brand: 'Differin', description: 'A targeted treatment to fight acne-causing bacteria and reduce inflammation.', image: 'https://placehold.co/150x150/e0f2fe/0c4a6e?text=Differin' });
+            }
+            if (concerns.includes('anti-aging') || userAnswers.age.includes('thirties') || userAnswers.age.includes('forties')) {
+                 recommendedProducts.push({ name: 'Retinol Serum', brand: 'RoC', description: 'Improves the appearance of fine lines and wrinkles for a more youthful look.', image: 'https://placehold.co/150x150/fdf2f8/831843?text=RoC+Retinol' });
+            }
+            if (concerns.includes('dullness') || userAnswers.lifestyle.includes('urban')) {
+                recommendedProducts.push({ name: 'Vitamin C Brightening Serum', brand: 'Sunday Riley', description: 'A powerful antioxidant that brightens the complexion and protects against environmental damage.', image: 'https://placehold.co/150x150/f0f9ff/172554?text=Sunday+Riley' });
+            }
+            if (concerns.includes('pigmentation')) {
+                recommendedProducts.push({ name: 'Azelaic Acid Suspension', brand: 'The Ordinary', description: 'Brightens skin tone and visibly improves the evenness of skin texture and reduces the look of blemishes.', image: 'https://placehold.co/150x150/f8fafc/0f172a?text=The+Ordinary' });
+            }
+            if (concerns.includes('pores') && userAnswers.skinType.includes('oily')) {
+                recommendedProducts.push({ name: 'Salicylic Acid Exfoliant', brand: 'Paula\'s Choice', description: 'Gently exfoliates dead skin cells to unclog pores and improve skin clarity.', image: 'https://placehold.co/150x150/f5f5f4/525252?text=Paulas+Choice' });
+            }
+
+            const uniqueRecommendations = [...new Map(recommendedProducts.map(item => [item.name, item])).values()];
+            
+            let resultsHtml = '';
+            if (uniqueRecommendations.length > 0) {
+                resultsHtml = `
+                    <h2 class="text-2xl sm:text-3xl font-bold text-gray-800 text-center mb-6">Your Personalized Routine:</h2>
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        ${uniqueRecommendations.map(product => `
+                            <div class="p-4 bg-gray-50 rounded-xl border border-gray-200 shadow-sm flex flex-col items-center text-center">
+                                <img src="${product.image}" alt="${product.name}" class="rounded-lg mb-4 w-24 h-24 sm:w-32 sm:h-32 object-cover transition-transform duration-300 hover:scale-105">
+                                <h3 class="text-lg sm:text-xl font-bold text-indigo-600">${product.name}</h3>
+                                <p class="text-sm font-semibold text-gray-500 mb-2">${product.brand}</p>
+                                <p class="text-gray-700 text-sm">${product.description}</p>
+                            </div>
+                        `).join('')}
+                    </div>
+                `;
+            } else {
+                resultsHtml = `<p class="text-lg text-gray-600 text-center">Sorry, we couldn't find a recommendation for you. Please try again!</p>`;
+            }
+
+            mainContent.innerHTML = `
+                <div class="space-y-8 w-full fade-in">
+                    ${resultsHtml}
+                    <div class="text-center pt-4">
+                        <button id="reset-btn" class="px-6 py-3 bg-gray-200 text-gray-800 rounded-full font-bold shadow-sm hover:bg-gray-300 transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gray-400">
+                            Start Over
+                        </button>
+                    </div>
+                </div>
+            `;
+
+            document.getElementById('reset-btn').addEventListener('click', resetApp);
+        }
+
+        async function resetApp() {
+            if (userDataSubscription) {
+                userDataSubscription();
+            }
+            userAnswers = {};
+            currentQuestionIndex = 0;
+            if (userDataRef) {
+                setDoc(userDataRef, {}).then(() => {
+                    console.log("Cleared user data in Firestore.");
+                }).catch(e => {
+                    console.error("Error clearing data:", e);
+                });
+            }
+            renderPage('products');
+        }
+
+        // Main app flow
+        async function initApp() {
+            showLoading();
+            await signIn();
+
+            onAuthStateChanged(auth, async (user) => {
+                if (user) {
+                    userId = user.uid;
+                    userDataRef = doc(db, 'artifacts', appId, 'users', userId, 'skincareData', 'answers');
+                    userInfoSpan.textContent = `User ID: ${userId}`;
+
+                    userDataSubscription = onSnapshot(userDataRef, (docSnap) => {
+                        if (docSnap.exists() && Object.keys(docSnap.data()).length > 0) {
+                            userAnswers = docSnap.data();
+                            console.log("Loaded user data from Firestore:", userAnswers);
+                        } else {
+                            console.log("No user data found in Firestore, starting fresh.");
+                            userAnswers = {};
+                        }
+                        hideLoading();
+                        renderPage('home'); // Render home page after auth state is ready
+                    }, (error) => {
+                        console.error("Error fetching user data:", error);
+                        hideLoading();
+                        renderPage('home');
+                    });
+                } else {
+                    console.log("No user signed in.");
+                    hideLoading();
+                    renderPage('home');
+                }
+            });
+
+            // Set up navigation
+            document.querySelectorAll('.nav-link').forEach(link => {
+                link.addEventListener('click', (event) => {
+                    event.preventDefault();
+                    const page = event.target.getAttribute('data-page');
+                    renderPage(page);
+                });
+            });
+        }
+
+        // Start the application
+        initApp();
+    </script>
+</body>
+</html>
